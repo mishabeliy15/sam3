@@ -9,7 +9,16 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-from torch.nn.attention import sdpa_kernel, SDPBackend
+try:
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+except ImportError:
+    from contextlib import nullcontext
+    sdpa_kernel = lambda *a, **kw: nullcontext()
+    class _SDPBackendStub:
+        MATH = "math"
+        EFFICIENT_ATTENTION = "efficient"
+        FLASH_ATTENTION = "flash"
+    SDPBackend = _SDPBackendStub
 
 from .act_ckpt_utils import activation_ckpt_wrapper
 from .data_misc import NestedTensor

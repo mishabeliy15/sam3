@@ -13,10 +13,21 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as torchF
+if not hasattr(torch.compiler, 'is_dynamo_compiling'):
+    torch.compiler.is_dynamo_compiling = lambda: False
 from sam3.sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
 from sam3.sam.transformer import RoPEAttention
 from torch import nn, Tensor
-from torch.nn.attention import sdpa_kernel, SDPBackend
+try:
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+except ImportError:
+    from contextlib import nullcontext
+    sdpa_kernel = lambda *a, **kw: nullcontext()
+    class _SDPBackendStub:
+        MATH = "math"
+        EFFICIENT_ATTENTION = "efficient"
+        FLASH_ATTENTION = "flash"
+    SDPBackend = _SDPBackendStub
 from torchvision.ops.roi_align import RoIAlign
 
 from .act_ckpt_utils import activation_ckpt_wrapper
@@ -73,7 +84,7 @@ class TransformerDecoderLayer(nn.Module):
         return tensor if pos is None else tensor + pos
 
     def forward_ffn(self, tgt):
-        with torch.amp.autocast(device_type="cuda", enabled=False):
+        with torch.amp.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=False):
             tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout4(tgt2)
         tgt = self.norm3(tgt)
@@ -280,7 +291,7 @@ class TransformerDecoder(nn.Module):
             if resolution is not None and stride is not None:
                 feat_size = resolution // stride
                 coords_h, coords_w = self._get_coords(
-                    feat_size, feat_size, device="cuda"
+                    feat_size, feat_size, device="cuda" if torch.cuda.is_available() else "cpu"
                 )
                 self.compilable_cord_cache = (coords_h, coords_w)
                 self.compilable_stored_size = (feat_size, feat_size)

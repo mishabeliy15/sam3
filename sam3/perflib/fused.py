@@ -4,12 +4,26 @@
 
 import torch
 
-addmm_act_op = torch.ops.aten._addmm_activation
+try:
+    addmm_act_op = torch.ops.aten._addmm_activation
+    _HAS_FUSED_OP = True
+except (AttributeError, RuntimeError):
+    _HAS_FUSED_OP = False
 
 
 def addmm_act(activation, linear, mat1):
     if torch.is_grad_enabled():
         raise ValueError("Expected grad to be disabled.")
+
+    # CPU/MPS fallback — no fused bfloat16 kernel available
+    if not _HAS_FUSED_OP or not mat1.is_cuda:
+        x = torch.nn.functional.linear(mat1, linear.weight, linear.bias)
+        if activation in [torch.nn.functional.relu, torch.nn.ReLU]:
+            return torch.nn.functional.relu(x)
+        if activation in [torch.nn.functional.gelu, torch.nn.GELU]:
+            return torch.nn.functional.gelu(x)
+        raise ValueError(f"Unexpected activation {activation}")
+
     self = linear.bias.detach()
     mat2 = linear.weight.detach()
     self = self.to(torch.bfloat16)
